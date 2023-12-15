@@ -4,7 +4,7 @@ import { UpdateUnreadMessageDto } from './dto/update-unread_message.dto';
 import { InjectModel } from '@nestjs/mongoose';
 // import { UnreadMessage } from './schema/unread_messages.schema';
 import { UnreadMessage } from './interface/unread_messages.interface';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 
 @Injectable()
 export class UnreadMessagesService {
@@ -17,22 +17,28 @@ export class UnreadMessagesService {
     sender_id: string;
     receiver_room_id: string;
     last_message: string;
+    currentUser?: string;
     // unread_count: number;
   }): Promise<UnreadMessage> {
-    console.log('inside unread message');
-
     console.log('data from message srvice', data);
     try {
       const existingUnreadMessage = await this.findOneUnreadMessage({
         sender_id: data.sender_id,
         receiver_room_id: data.receiver_room_id,
       });
-      if (existingUnreadMessage)
-        await this.update(data.sender_id, data.receiver_room_id, {
-          unread_count: existingUnreadMessage.unread_count + 1,
-          last_message: data.last_message,
-        });
-      else
+      if (existingUnreadMessage) {
+        if (data.receiver_room_id !== data.currentUser) {
+          await this.update(data.sender_id, data.receiver_room_id, {
+            unread_count: existingUnreadMessage.unread_count + 1,
+            last_message: data.last_message,
+          });
+        } else {
+          await this.update(data.sender_id, data.receiver_room_id, {
+            unread_count: 0,
+            last_message: data.last_message,
+          });
+        }
+      } else
         await this.unreadMessage.create({
           sender_id: data.sender_id,
           receiver_room_id: data.receiver_room_id,
@@ -45,7 +51,7 @@ export class UnreadMessagesService {
     }
   }
 
-  async findAll() {
+  async findAll(): Promise<UnreadMessage[]> {
     return await this.unreadMessage.find().exec();
   }
 
@@ -76,8 +82,8 @@ export class UnreadMessagesService {
   async remove(sender_id: string, receiver_room_id: string) {
     console.log('inside unread message remove');
     const value = await this.unreadMessage.findOne({
-      sender_id: sender_id,
-      receiver_room_id: receiver_room_id,
+      sender_id: new mongoose.Types.ObjectId(sender_id),
+      receiver_room_id: new mongoose.Types.ObjectId(receiver_room_id),
     });
 
     if (value) {

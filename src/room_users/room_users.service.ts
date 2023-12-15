@@ -50,16 +50,18 @@ export class RoomUsersService {
       const groups = await this.roomUserModel.find({ user_id: userId }).exec();
 
       if (groups.length) {
-        const allGrps = Promise.all(
-          groups.map(async (group) => {
-            const room = await this.roomService.fetchOneRoom(group.room_id);
-            // console.log(room);
-            if (room) {
-              return room;
-            }
-          }),
-        );
-        return allGrps;
+        const allGrps = groups.map(async (group) => {
+          const room = await this.roomService.fetchOneRoom(group.room_id);
+          // console.log(room);
+          if (room) {
+            return room;
+          }
+        });
+        if (allGrps.length) return Promise.all(allGrps);
+        else {
+          console.log('this user do not have a group');
+          throw new HttpException('User does not have a group', 404);
+        }
       }
     } catch (error) {
       if (error instanceof Error)
@@ -84,8 +86,10 @@ export class RoomUsersService {
 
   // find one room by id
   async getAllGroupMembers(id: string) {
+    console.log('group id: ', id);
     const groupMembers = await this.roomUserModel.find({ room_id: id }).exec();
     if (!groupMembers.length) {
+      console.log('No room with such id');
       throw new NotFoundException('No room with such id');
     }
     // console.log('members of the group: ', groupMembers);
@@ -108,6 +112,7 @@ export class RoomUsersService {
       }),
     );
     if (!membersRoomObjects.length) {
+      console.log('cannot find members room for this groups');
       throw new NotFoundException('cannot find members room for this groups');
     }
 
@@ -123,73 +128,77 @@ export class RoomUsersService {
         await this.roomService.fetchAllRooms(userId),
       ]);
 
-    if (allUnreadMessages && myRoom) {
-      return allUnreadMessages
-        ?.reduce(
-          (acc, curr) => {
-            return acc?.map((item: any) => {
-              if (
-                (item?.original_dm_roomID &&
-                  item.original_dm_roomID === curr.sender_id.toString() &&
-                  curr?.receiver_room_id.toString() === myRoom.id.toString()) ||
-                (item?.isGroup &&
-                  curr.receiver_room_id.toString() === item.id.toString())
-              ) {
-                3;
-                return {
-                  ...item,
-                  unread_count: curr?.unread_count,
-                  last_message: curr?.last_message,
-                  updatedAt: curr?.updatedAt,
-                };
-              } else
-                return {
-                  ...item,
-                  unread_count: 0,
-                  last_message: '',
-                  updatedAt: item?.updatedAt,
-                };
-            });
-          },
-          [...allRooms, ...allGroupOfAMember],
-        )
-        ?.map((item) => {
-          if (item._doc)
-            return {
-              name: item?._doc.name,
-              image: item?._doc.image,
-              isGroup: item?._doc.isGroup,
-              user_id: item?._doc.user_id,
-              my_id: item?._doc.my_id,
-              createdAt: item?._doc.createdAt,
-              updatedAt: item?._doc.createdAt,
-              original_dm_roomID: item?._doc.original_dm_roomID,
-              id: item?._doc._id,
-              unread_count: 0,
-              last_message: '',
-            };
-          else
-            return {
-              name: item?.name,
-              image: item?.image,
-              isGroup: item?.isGroup,
-              user_id: item?.user_id,
-              my_id: item?.my_id,
-              createdAt: item?.createdAt,
-              updatedAt: item?.updatedAt,
-              original_dm_roomID: item?.original_dm_roomID,
-              id: item?.id,
-              unread_count: item?.unread_count,
-              last_message: item?.last_message,
-            };
-        })
-        .sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1))
-        ?.filter((item) => item.name);
-      // .reduce((acc, item) => {
-      //   if (!acc.find((curr) => curr.id === item.id)) acc.push(item);
-      //   return acc;
-      // }, []);
-    }
+    let joinRoom: Room[] = [...allRooms];
+    if (allGroupOfAMember?.length)
+      joinRoom = [...allRooms, ...allGroupOfAMember];
+    const chats = allUnreadMessages
+      ?.reduce(
+        (acc, curr) => {
+          return acc?.map((item: any) => {
+            if (
+              (item?.original_dm_roomID &&
+                item.original_dm_roomID === curr.sender_id.toString() &&
+                curr?.receiver_room_id.toString() === myRoom.id.toString()) ||
+              (item?.isGroup &&
+                curr.receiver_room_id.toString() === item.id.toString())
+            ) {
+              return {
+                ...item,
+                unread_count: curr?.unread_count,
+                last_message: curr?.last_message,
+                updatedAt: curr?.updatedAt,
+              };
+            } else
+              return {
+                ...item,
+                unread_count: 0,
+                last_message: '',
+                updatedAt: '',
+              };
+          });
+        },
+        [...joinRoom],
+      )
+      ?.map((item) => {
+        if (item._doc)
+          return {
+            name: item?._doc.name,
+            image: item?._doc.image,
+            isGroup: item?._doc.isGroup,
+            user_id: item?._doc.user_id,
+            my_id: item?._doc.my_id,
+            createdAt: item?._doc.createdAt,
+            updatedAt: item?.updatedAt,
+            original_dm_roomID: item?._doc.original_dm_roomID,
+            id: item?._doc._id,
+            unread_count: item.unread_count,
+            last_message: item.last_message,
+          };
+        else
+          return {
+            name: item?.name,
+            image: item?.image,
+            isGroup: item?.isGroup,
+            user_id: item?.user_id,
+            my_id: item?.my_id,
+            createdAt: item?.createdAt,
+            updatedAt: item?.updatedAt,
+            original_dm_roomID: item?.original_dm_roomID,
+            id: item?.id,
+            unread_count: item?.unread_count,
+            last_message: item?.last_message,
+          };
+      })
+      ?.filter((item) => item.name)
+      ?.reduce((acc, curr) => {
+        if (!acc.find((item) => item.id === curr.id)) {
+          acc.push(curr);
+        }
+        return acc;
+      }, []);
+
+    // console.log('all chats', chats);
+    return chats;
   }
 
   shuffleArr(array: any[]) {

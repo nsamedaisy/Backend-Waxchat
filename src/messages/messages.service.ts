@@ -1,4 +1,9 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { UpdateMessageDto } from './dto/update-message.dto';
 // import { Message } from './schema/message.schema';
@@ -40,6 +45,7 @@ export class MessagesService {
           sender_id: createdMessage.sender_id,
           receiver_room_id: createdMessage.receiver_room_id,
           last_message: createdMessage.content,
+          currentUser: canProceed,
         });
 
       return createdMessage;
@@ -57,78 +63,102 @@ export class MessagesService {
     sender_id: string,
     receiver_room_id: string,
   ): Promise<Message[]> {
-    console.log('inside get message function', sender_id, receiver_room_id);
-    await this.unreadMessage.remove(sender_id, receiver_room_id);
-    try {
-      const sentMessages = await this.getSentMessages(
-        sender_id,
-        receiver_room_id,
-      );
+    console.log('inside get b2b message function', sender_id, receiver_room_id);
+    if (sender_id && receiver_room_id) {
+      await this.unreadMessage.remove(sender_id, receiver_room_id);
+      try {
+        const sentMessages = await this.getSentMessages(
+          sender_id,
+          receiver_room_id,
+        );
 
-      const receivedMessages = await this.getReceivedMessages(
-        sender_id,
-        receiver_room_id,
-      );
-      //reset unread messages to initial state
-      // await this.unreadMessage.remove(sender_id, receiver_room_id);
+        const receivedMessages = await this.getReceivedMessages(
+          sender_id,
+          receiver_room_id,
+        );
+        //reset unread messages to initial state
+        // await this.unreadMessage.remove(sender_id, receiver_room_id);
 
-      await this.updateMessage(sender_id, receiver_room_id, {
-        is_read: true,
-        reaction: '',
-      });
+        const messages = [...sentMessages, ...receivedMessages];
+        // console.log('all messages', messages);
 
-      const messages = [...sentMessages, ...receivedMessages];
-      // console.log('all messages', messages);
-
-      return this.shuffleMessages(messages);
-    } catch (error) {
-      if (error instanceof Error) console.log('error getting messages', error);
-      return Promise.reject(error);
-    }
+        return this.shuffleMessages(messages);
+      } catch (error) {
+        if (error instanceof Error)
+          console.log('error getting messages', error);
+        return Promise.reject(error);
+      }
+    } else console.log('no sender or receiver to find these messages');
   }
 
   async updateMessage(
-    sender_id: string,
-    receiver_room_id: string,
-    updateMessageDto: UpdateMessageDto,
+    message_id: string,
+    value: string | boolean,
   ): Promise<Message> {
     // const id = new mongoose.Types.ObjectId(messageId);
-    try {
-      const updatedMessage = await this.messageModel.findOne({
-        sender_id,
-        receiver_room_id,
-      });
-      if (updatedMessage) {
-        if (typeof updateMessageDto === 'boolean')
-          updatedMessage.is_read = updateMessageDto;
-        else if (typeof updateMessageDto === 'string')
-          updatedMessage.reaction = updateMessageDto;
-
-        return await updatedMessage.save();
+    if (message_id)
+      try {
+        const updatedMessage = await this.messageModel.findById({
+          _id: new mongoose.Types.ObjectId(message_id),
+        });
+        if (updatedMessage) {
+          if (typeof value === 'string') updatedMessage.reaction = value;
+          else if (typeof value === 'boolean') updatedMessage.is_read = value;
+          return (await updatedMessage.save()).toJSON();
+        }
+      } catch (error) {
+        if (error instanceof Error)
+          console.log('error updating messages', error);
+        return Promise.reject(error);
       }
-    } catch (error) {
-      if (error instanceof Error) console.log('error updating messages', error);
-      return Promise.reject(error);
-    }
+    else console.log('No message id found');
+  }
+
+  async markMessageAsRead(sender_id: string, receiver_room_id: string) {
+    const senderID = new mongoose.Types.ObjectId(sender_id);
+    const receivedID = new mongoose.Types.ObjectId(receiver_room_id);
+    const message = await this.messageModel.updateMany(
+      {
+        sender_id: senderID,
+        receiver_room_id: receivedID,
+      },
+      { is_read: true },
+    );
+
+    if (message) {
+      console.log(message);
+    } else throw new HttpException(' No such message', HttpStatus.NOT_FOUND);
   }
 
   async getGroupMessage(groupId: string, senderId: string): Promise<Message[]> {
-    try {
-      await this.unreadMessage.remove(senderId, groupId);
-      const allGroupMessages = await this.messageModel
-        .find({ receiver_room_id: groupId })
-        .sort('createdAt DESC')
-        .exec();
-      if (allGroupMessages) return allGroupMessages;
-      else
-        throw new HttpException('No such group messages', HttpStatus.NOT_FOUND);
-    } catch (error) {
-      if (error instanceof Error)
-        console.log('error fetching all group messages', error);
-      throw new HttpException(
-        'Error fetching all group messages',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    if (groupId && senderId) {
+      try {
+        await this.unreadMessage.remove(senderId, groupId);
+        await this.markMessageAsRead(senderId, groupId);
+
+        const allGroupMessages = await this.messageModel
+          .find({
+            receiver_room_id: new mongoose.Types.ObjectId(groupId),
+          })
+          .sort('createdAt DESC')
+          .exec();
+        if (allGroupMessages) return allGroupMessages;
+        else
+          throw new HttpException(
+            'No such group messages',
+            HttpStatus.NOT_FOUND,
+          );
+      } catch (error) {
+        if (error instanceof Error)
+          console.log('error fetching all group messages', error);
+        throw new HttpException(
+          'Error fetching all group messages',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+    } else {
+      console.log('ccan not get group messages bcause group id is invalid');
+      throw new NotFoundException("can't fing invalid group id message");
     }
   }
 
@@ -146,7 +176,7 @@ export class MessagesService {
       sender_id: senderID,
       receiver_room_id: receivedID,
     });
-
+    await this.markMessageAsRead(sender_id, receiver_room_id);
     if (sentMessages) {
       console.log(sentMessages);
       return sentMessages;
@@ -164,7 +194,7 @@ export class MessagesService {
       sender_id: receivedID,
       receiver_room_id: senderID,
     });
-
+    await this.markMessageAsRead(receiver_room_id, sender_id);
     if (receivedMessages) {
       console.log(receivedMessages);
       return receivedMessages;
