@@ -23,10 +23,11 @@ export class RoomUsersService {
 
   // Post data in the roomUser table
   async create(createRoomUserDto: CreateRoomUserDto): Promise<RoomUser> {
-    console.log('data from service', createRoomUserDto);
     const createRoomUser = new this.roomUserModel(createRoomUserDto);
     console.log('this is roomuser from service', createRoomUser);
-    return await createRoomUser.save();
+    const room_user = await createRoomUser.save();
+    console.log('room user created', room_user);
+    return room_user;
   }
 
   // get all roomUsers
@@ -89,8 +90,8 @@ export class RoomUsersService {
     console.log('group id: ', id);
     const groupMembers = await this.roomUserModel.find({ room_id: id }).exec();
     if (!groupMembers.length) {
-      console.log('No room with such id');
-      throw new NotFoundException('No room with such id');
+      console.log('no members for this group');
+      throw new NotFoundException('this group does not have members');
     }
     // console.log('members of the group: ', groupMembers);
     const membersRoomObjects: Room[] = await Promise.all(
@@ -98,16 +99,16 @@ export class RoomUsersService {
         const object = await this.roomService.getSingleRoom(roomUser.user_id);
 
         return {
-          name: object.name,
-          image: object.image,
-          isGroup: object.isGroup,
-          user_id: object.user_id,
-          my_id: object.my_id,
-          createdAt: object.createdAt,
-          updatedAt: object.updatedAt,
-          id: object.id,
-          role: roomUser.role,
-          original_dm_roomID: object.original_dm_roomID,
+          name: object?.name,
+          image: object?.image,
+          isGroup: object?.isGroup,
+          user_id: object?.user_id,
+          my_id: object?.my_id,
+          createdAt: object?.createdAt,
+          updatedAt: object?.updatedAt,
+          id: object?.id,
+          role: roomUser?.role,
+          original_dm_roomID: object?.original_dm_roomID,
         };
       }),
     );
@@ -144,17 +145,18 @@ export class RoomUsersService {
             ) {
               return {
                 ...item,
-                unread_count: curr?.unread_count,
-                last_message: curr?.last_message,
+                unread_count: curr.unread_count,
+                last_message: curr.last_message,
                 updatedAt: curr?.updatedAt,
               };
-            } else
+            } else {
               return {
                 ...item,
                 unread_count: 0,
                 last_message: '',
-                updatedAt: '',
+                updatedAt: item?.createdAt,
               };
+            }
           });
         },
         [...joinRoom],
@@ -168,7 +170,7 @@ export class RoomUsersService {
             user_id: item?._doc.user_id,
             my_id: item?._doc.my_id,
             createdAt: item?._doc.createdAt,
-            updatedAt: item?.updatedAt,
+            updatedAt: item?._doc.updatedAt,
             original_dm_roomID: item?._doc.original_dm_roomID,
             id: item?._doc._id,
             unread_count: item.unread_count,
@@ -189,13 +191,7 @@ export class RoomUsersService {
             last_message: item?.last_message,
           };
       })
-      ?.filter((item) => item.name)
-      ?.reduce((acc, curr) => {
-        if (!acc.find((item) => item.id === curr.id)) {
-          acc.push(curr);
-        }
-        return acc;
-      }, []);
+      ?.filter((item) => item.name);
 
     // console.log('all chats', chats);
     return chats;
